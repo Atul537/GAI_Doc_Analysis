@@ -8,18 +8,30 @@ from langchain import VectorDBQA
 from pathlib import Path
 import pandas as pd
 import os
-import openai
-import chromadb
+import streamlit as st
+import pdfplumber
+import pandas as pd
+from PyPDF2 import PdfReader
+import io
+import tempfile
 
-pip install tiktoken
-pip install chromadb
-pip install pypdf
-key = os.environ['OPENAI_API_KEY']
+
+
+def read_pdf(file):
+    pdf_reader = PdfReader(file)
+    num_pages = len(pdf_reader.pages)
+    text = ""
+    for page in range(num_pages):
+        page_obj = pdf_reader.pages[page]
+        text += page_obj.extract_text()
+    return text
+
+os.environ['OPENAI_API_KEY'] = "....."
 
 llm = OpenAI(temperature=0)
 chain = load_summarize_chain(llm, chain_type="map_reduce")
 text_splitter = CharacterTextSplitter(chunk_size=1000,chunk_overlap=0)
-embeddings = OpenAIEmbeddings(openai_api_key=key)
+embeddings = OpenAIEmbeddings(openai_api_key="....")
 
 def pdf_summarizer(pdf_paths):
     names = []
@@ -27,12 +39,17 @@ def pdf_summarizer(pdf_paths):
     q1s = []
     q2s = []
     for path in pdf_paths:
-        file_name = Path(path).stem
-        loader = PyPDFLoader(path)
-        data = loader.load()
+        file_bytes = path.read()          
+        #file_bytes = read_pdf(io.BytesIO(file_bytes))  
+        temp_file = tempfile.NamedTemporaryFile(delete=False)
+        temp_file.write(file_bytes)
+        temp_file.close()
+
+        loader = PyPDFLoader(temp_file.name)
+        data = loader.load()  
         data = text_splitter.split_documents(data)
         summary = chain.run(data)
-        names.append(file_name)
+        names.append(path.name)
         summaries.append(summary)
         pagesearch = Chroma.from_documents(data, embeddings)
         qa = VectorDBQA.from_chain_type(llm=llm, chain_type='stuff', vectorstore=pagesearch)
@@ -44,10 +61,13 @@ def pdf_summarizer(pdf_paths):
         print(q2)
         q1s.append(q1)
         q2s.append(q2)
+        temp_file.unlink()
     df = pd.DataFrame({'Doc#':list(range(1,len(pdf_paths)+1)), 'Title/Name':names, 'Summary': summaries, 'Query1': q1s, 'Query2': q2s})
     return df
+st.title('Legal docs summarizer')
+st.write('Upload Legal PDF files to generate a summary.')
 
-pdf_paths = ["C:/Users/atul60176/Downloads/Legal_Docs/LegalContract_1.pdf", "C:/Users/atul60176/Downloads/Legal_Docs/LegalContract_2.pdf"]
+uploaded_files = st.file_uploader('Upload Files', type=['pdf'], accept_multiple_files=True)
 
-df = pdf_summarizer(pdf_paths)
-df.to_excel('C:/Users/atul60176/Downloads/Legal_Docs//output.xlsx',index=False)
+df = pdf_summarizer(uploaded_files)
+df.to_excel('output.xlsx',index=False)
